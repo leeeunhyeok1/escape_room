@@ -1,46 +1,736 @@
-<!doctype html>
-
-<html>
+<!DOCTYPE html>
+<html lang="ko">
 <head>
-  <meta charset="utf-8">
-  <title>HTML Example</title>
-  
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="stylesheet" href="css/about.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>동래구 기록 복구 프로젝트 3D</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Noto Sans KR', sans-serif; background-color: #000; color: #f8fafc; overflow: hidden; user-select: none; margin: 0; padding: 0; touch-action: none; }
+        #canvas-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; }
+        #ui-layer { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+        .interactive-ui { pointer-events: auto; }
+        
+        .glass-panel { background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(18px); border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.6); }
+        .glass-button { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); backdrop-filter: blur(4px); transition: all 0.3s ease; }
+        .glass-button:hover { background: rgba(16, 185, 129, 0.2); border-color: rgba(16, 185, 129, 0.5); transform: translateY(-2px); }
+        .glass-button:active { transform: translateY(0); }
+
+        #object-tooltip { position: fixed; background: rgba(0, 0, 0, 0.9); border: 1px solid #fbbf24; color: #fbbf24; padding: 6px 14px; border-radius: 6px; font-size: 14px; font-weight: bold; pointer-events: none; display: none; z-index: 20; transform: translate(-50%, -150%); }
+        
+        /* z-index를 5로 낮춰서 UI(10) 뒤에, 3D 캔버스(0) 앞에 오도록 수정 */
+        #blackout { position: fixed; inset: 0; background: black; z-index: 5; opacity: 1; pointer-events: none; transition: opacity 2s ease-in-out, background-color 0.8s ease; }
+        
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(16, 185, 129, 0.5); border-radius: 4px; }
+    </style>
 </head>
 <body>
-  <section class="center">
-    <aside class="sidebar"></aside>
-    
-    <section class="contents">
-      <!-- page will be include here -->
-      <section id="page" class="page">
-        <section id="about">
-          <section class="frame">
-            <h2><b>HELLO</b>WORLD</h2>
+
+    <div id="canvas-container"></div>
+    <div id="object-tooltip">오브젝트 이름</div>
+    <div id="blackout"></div>
+
+    <div id="ui-layer" class="w-full h-full flex flex-col relative">
+        <!-- 상태창 -->
+        <div id="sidebar" class="interactive-ui absolute top-4 left-4 w-[240px] md:w-80 glass-panel rounded-2xl p-4 flex flex-col gap-3 transition-opacity duration-700 opacity-0">
+            <div class="flex justify-between items-center border-b border-slate-600/50 pb-2">
+                <span class="text-blue-400 font-bold text-xs tracking-widest uppercase">조사요원</span>
+                <span id="ui-location" class="text-emerald-400 text-[10px] md:text-xs font-bold bg-emerald-900/40 px-2 py-1 rounded">CONNECTING...</span>
+            </div>
+            <div class="flex justify-between items-center">
+                <span class="text-slate-400 text-xs md:text-sm font-medium">남은 시간</span>
+                <span id="ui-time" class="font-bold text-slate-500 text-xl md:text-2xl font-mono">40:00</span>
+            </div>
+            <div>
+                <div class="flex justify-between items-center mb-1">
+                    <span class="text-slate-400 text-xs font-medium">이해도</span>
+                    <span id="ui-understanding" class="font-bold text-emerald-400 text-xs">0%</span>
+                </div>
+                <div class="w-full bg-slate-800/80 rounded-full h-1.5 overflow-hidden">
+                    <div id="ui-progress-bar" class="bg-emerald-500 h-1.5 rounded-full transition-all duration-700" style="width: 0%;"></div>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2 mt-1">
+                <div class="bg-slate-800/40 p-2 rounded-lg border border-slate-700/50">
+                    <span class="block text-slate-500 text-[10px] mb-1 font-bold uppercase">Items</span>
+                    <div id="ui-inventory" class="text-[10px] text-amber-200/90 flex flex-col gap-1 min-h-[20px]"><span class="italic text-slate-600">없음</span></div>
+                </div>
+                <div class="bg-slate-800/40 p-2 rounded-lg border border-slate-700/50 flex flex-col justify-center items-center">
+                    <span class="block text-slate-500 text-[10px] mb-1 w-full text-left font-bold uppercase">Codes</span>
+                    <div id="ui-codes" class="text-base font-black text-white tracking-[0.2em]">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 하단 대화창 -->
+        <div id="dialogue-box" class="interactive-ui absolute bottom-6 md:bottom-10 left-1/2 -translate-x-1/2 w-[92%] md:w-[85%] max-w-2xl glass-panel border border-slate-600/50 rounded-2xl p-5 hidden cursor-pointer transition-opacity duration-700 opacity-0">
+            <div id="speaker-name" class="text-amber-400 font-bold mb-2 text-xs tracking-widest uppercase">시스템</div>
+            <div id="dialogue-text" class="text-white text-base md:text-xl leading-relaxed font-medium break-keep"></div>
+            <div class="text-slate-500 text-[10px] text-right mt-3 animate-pulse font-bold">화면을 탭(클릭)하여 진행 ▼</div>
+        </div>
+    </div>
+
+    <!-- 문제 풀이 모달 -->
+    <div id="question-modal" class="interactive-ui fixed inset-0 bg-black/60 z-[150] hidden flex items-center justify-center p-4 backdrop-blur-md">
+        <div class="glass-panel rounded-3xl p-6 md:p-10 max-w-lg w-full max-h-[85vh] overflow-y-auto custom-scrollbar fade-in relative">
+            <h3 id="modal-title" class="text-amber-400 text-xl font-bold border-b border-white/10 pb-4 mb-6 flex items-center gap-2"><span>단서 해독</span></h3>
+            <p id="modal-desc" class="text-slate-100 mb-8 text-base md:text-lg leading-relaxed break-keep"></p>
+            <div id="modal-answer-area" class="space-y-3 mb-4"></div>
+            <div id="modal-feedback" class="hidden text-center font-black mt-4 py-3 rounded-xl text-sm transition-colors duration-300"></div>
+        </div>
+    </div>
+
+    <!-- 결과창 -->
+    <div id="result-screen" class="interactive-ui fixed inset-0 z-[200] hidden flex flex-col items-center justify-center bg-white text-slate-900 opacity-0 transition-opacity duration-1500 px-6">
+        <div class="flex flex-col items-center">
+            <h1 class="text-5xl md:text-8xl font-black text-emerald-600 mb-6 text-center tracking-tighter">MISSION CLEAR</h1>
+            <h2 class="text-2xl md:text-4xl font-black mb-4 text-center leading-tight">축하합니다!<br>시스템 붕괴를 지켜냈습니다.</h2>
+            <div class="bg-slate-50 p-8 rounded-[40px] shadow-2xl border border-slate-100 text-center w-full max-w-md">
+                <span class="block text-slate-400 text-sm font-black mb-3 tracking-widest uppercase">Clear Time</span>
+                <span id="result-time" class="text-5xl font-mono font-black text-amber-500 italic">00:00</span>
+            </div>
+            <button onclick="location.reload()" class="mt-12 px-10 py-4 bg-slate-900 text-white font-black rounded-full hover:bg-emerald-600 transition-colors shadow-xl">다시 시작하기</button>
+        </div>
+    </div>
+
+    <div id="fail-screen" class="interactive-ui fixed fixed inset-0 z-[200] hidden flex flex-col items-center justify-center bg-black text-white opacity-0 transition-opacity duration-1500 px-6">
+        <h1 class="text-5xl md:text-8xl font-black text-rose-600 mb-6 text-center tracking-tighter">SYSTEM FAILURE</h1>
+        <button onclick="location.reload()" class="px-10 py-4 bg-rose-600 text-white font-black rounded-full hover:bg-rose-700 transition-colors">시스템 재접속 시도</button>
+    </div>
+
+    <script>
+        /* ========================================================
+           1. 전체 방 게임 데이터
+           ======================================================== */
+        const storyData = [
+            {
+                id: "room1", name: "1번방 : 동래읍성",
+                wallColor: 0x1e293b, floorColor: 0x0f172a,
+                intro: [
+                    { speaker: "시스템", text: "동래구 도시 유지 시스템 오류 발생" },
+                    { speaker: "시스템", text: "공공 유지 기록 78% 손실" },
+                    { speaker: "서연", text: "이건 단순한 데이터 문제가 아니에요." },
+                    { speaker: "조사요원", text: "그럼 뭐죠?" },
+                    { speaker: "서연", text: "사람들이 하던 '행동' 자체가 사라지고 있어요." },
+                    { speaker: "시스템", text: "복구 가능 시간: 40:00" },
+                    { speaker: "시스템", text: "카운트다운 시작", action: "startTimer" },
+                    // 트리거 추가: 이 대사가 뜰 때 배경의 검은 화면이 걷히며 3D 방이 나타납니다.
+                    { speaker: "시스템", text: "구간 이동 중...", action: "fadeInRoom" },
+                    { speaker: "조사요원", text: "완전히 버려진 느낌이야..." },
+                    { speaker: "서연", text: "이곳은 사람들이 모이던 공간이었어요." }
+                ],
+                bgObjects: [
+                    { type: "castleWallX", pos: [0, -5, -14] }, { type: "castleWallZ", pos: [-14, -5, 0] }, { type: "castleWallZ", pos: [14, -5, 0] },
+                    { type: "castleTower", pos: [-13, -5, -13] }, { type: "castleTower", pos: [13, -5, -13] },
+                    { type: "stoneStairs", pos: [-11, -5, -12], rot: [0, Math.PI/2, 0] },
+                    { type: "flag", pos: [-8, -5, -10] }, { type: "flag", pos: [8, -5, -10] }, { type: "flag", pos: [10, -5, -3] }, 
+                    { type: "weaponRack", pos: [-10, -5, -4], rot: [0, Math.PI/4, 0] }, { type: "weaponRack", pos: [11, -5, 4] },
+                    { type: "brokenCart", pos: [6, -5, -7], rot: [0, -0.5, 0] }, 
+                    { type: "pineTree", pos: [-5, -5, 5] }, { type: "pineTree", pos: [7, -5, -3] }, { type: "pineTree", pos: [-10, -5, -1] },
+                    { type: "pineTree", pos: [10, -5, 7] }, { type: "rockCluster", pos: [9, -5, 6] }, { type: "rockCluster", pos: [-4, -5, 9] }
+                ],
+                objects: [
+                    {
+                        name: "낡은 깃발", type: "flag", pos: [-3, -5, -6], 
+                        preDialog: [{ speaker: "시스템", text: "낡은 깃발이다." }, { speaker: "조사요원", text: "글자가 희미하게 보이네..." }],
+                        question: "자원봉사의 '자발성'을 가장 잘 보여주는 모습은?", typeAnswer: "choice",
+                        options: ["친구가 해서 참여", "시간이 남아서 참여", "의미를 이해하고 스스로 참여", "쉬워 보여서 참여"],
+                        answer: "의미를 이해하고 스스로 참여", rewardItem: "선택의 기록", rewardUnderstanding: 10
+                    },
+                    {
+                        name: "돌 비석", type: "monument", pos: [5, -5, 2],
+                        preDialog: [{ speaker: "시스템", text: "비석에 홈이 있다." }, { speaker: "서연", text: "아이템을 사용해보세요." }],
+                        question: "자원봉사에 대한 설명으로 가장 알맞은 것은?", typeAnswer: "choice",
+                        options: ["특별한 사람만 할 수 있는 활동", "시간을 채우기 위한 활동", "기록을 남기기 위한 활동", "사회에 필요한 일에 스스로 참여하는 활동"],
+                        answer: "사회에 필요한 일에 스스로 참여하는 활동", rewardItem: "자(自) 조각", rewardUnderstanding: 20
+                    },
+                    {
+                        name: "성곽 출입문", type: "gate", pos: [0, -5, 12],
+                        preDialog: [{ speaker: "조사요원", text: "이 조각을 끼워보자." }],
+                        question: "'자'에 해당하는 한자는?", typeAnswer: "choice",
+                        options: ["自", "字", "者", "仔"], answer: "自", rewardCode: "자", rewardUnderstanding: 30
+                    }
+                ],
+                outro: [{ speaker: "서연", text: "스스로 선택하는 행동... 중요한 단서예요." }]
+            },
+            {
+                id: "room2", name: "2번방 : 동래시장",
+                wallColor: 0x451a03, floorColor: 0x292524,
+                intro: [
+                    { speaker: "시스템", text: "구간 이동 중..." },
+                    { speaker: "조사요원", text: "사람이 없으니까 완전히 멈춘 느낌이야." },
+                    { speaker: "서연", text: "누군가 계속 유지하던 공간이었어요." }
+                ],
+                bgObjects: [
+                    { type: 'stall', pos: [-9, -5, -9], rot: [0, 0.5, 0] }, { type: 'stall', pos: [9, -5, -6], rot: [0, -0.5, 0] },
+                    { type: 'stall', pos: [-8, -5, 5], rot: [0, 1.2, 0] }, { type: 'tent', pos: [8, -5, 8], rot: [0, -0.8, 0] },
+                    { type: 'barrel', pos: [5, -5, -8] }, { type: 'barrel', pos: [6, -5, -7.5] }, { type: 'barrel', pos: [-5, -5, 2] },
+                    { type: 'barrel', pos: [-4, -5, 2.5] }, { type: 'woodenBox', pos: [3, -5, 6] }, { type: 'woodenBox', pos: [-7, -5, -3] },
+                    { type: 'trashPile', pos: [7, -5, 2] }, { type: 'trashPile', pos: [-8, -5, 8] }, { type: 'streetLamp', pos: [-3, -5, -10] },
+                    { type: 'streetLamp', pos: [4, -5, 9] }
+                ],
+                objects: [
+                    {
+                        name: "오염된 쓰레기 더미", type: "trashPile", pos: [-2, -5, 5],
+                        preDialog: [], question: "다음 중 자원봉사활동으로 인정되기 어려운 활동은?", typeAnswer: "choice", 
+                        options: ["역사 알리기", "담배꽁초 줍기", "개인 컵 사용", "폐의약품 분리배출"], answer: "개인 컵 사용", rewardItem: "공동체 기록", rewardUnderstanding: 40
+                    },
+                    {
+                        name: "의문의 나무 상자", type: "woodenBox", pos: [6, -5, -2],
+                        preDialog: [], question: "여러 사람이 힘을 모아 도움을 준다는 사자성어는?", typeAnswer: "text", 
+                        answer: "십시일반", rewardItem: "나눔 조각", rewardUnderstanding: 50
+                    },
+                    {
+                        name: "낡은 게시판", type: "noticeBoard", pos: [0, -5, -11],
+                        preDialog: [], question: "금전적 이익을 목적으로 하지 않는 특성은?", typeAnswer: "choice", 
+                        options: ["공익성", "무보수성", "지속성", "자발성"], answer: "무보수성", rewardCode: "원", rewardUnderstanding: 60
+                    }
+                ],
+                outro: [{ speaker: "서연", text: "조금씩 연결되고 있어요." }]
+            },
+            {
+                id: "room3", name: "3번방 : 온천천",
+                wallColor: 0x064e3b, floorColor: 0x1c1917,
+                intro: [
+                    { speaker: "조사요원", text: "...이건 너무 심한데." },
+                    { speaker: "서연", text: "관리하던 기록이 사라진 이후 상태예요." }
+                ],
+                bgObjects: [
+                    { type: 'tree', pos: [-10, -5, -6] }, { type: 'tree', pos: [9, -5, -4] }, { type: 'tree', pos: [-8, -5, 7] },
+                    { type: 'bush', pos: [7, -5, 4] }, { type: 'bush', pos: [-4, -5, -8] }, { type: 'bush', pos: [10, -5, -8] },
+                    { type: 'bench', pos: [6, -5, -8], rot: [0, -0.5, 0] }, { type: 'bench', pos: [-6, -5, 8], rot: [0, 0.5, 0] },
+                    { type: 'pollutedWater', pos: [6, -4.9, 6] }, { type: 'pollutedWater', pos: [-8, -4.9, 2] },
+                    { type: 'brokenBridge', pos: [-6, -5, -3], rot: [0, 1.2, 0] },
+                    { type: 'streetLamp', pos: [0, -5, -10] }, { type: 'streetLamp', pos: [5, -5, 0] }
+                ],
+                objects: [
+                    {
+                        name: "핵심 오염 웅덩이", type: "pollutedWater", pos: [-3, -4.9, -5],
+                        preDialog: [], question: "서로 돕고 함께 살아가는 사회는?", typeAnswer: "text", 
+                        answer: "상부상조", rewardUnderstanding: 70
+                    },
+                    {
+                        name: "메인 나무 다리", type: "brokenBridge", pos: [4, -5, 3],
+                        preDialog: [], question: "문제 발생 시 가장 바람직한 행동은?", typeAnswer: "choice", 
+                        options: ["스스로 몰래 해결한다", "담당자에게 알린다", "활동을 즉시 그만둔다"], answer: "담당자에게 알린다", rewardUnderstanding: 80
+                    },
+                    {
+                        name: "하천 관리 부스", type: "guardHouse", pos: [0, -5, 10], rot: [0, Math.PI, 0],
+                        preDialog: [], question: "자원봉사활동을 관리하는 기관은?", typeAnswer: "text", 
+                        answer: "자원봉사센터", rewardCode: "봉", rewardUnderstanding: 85
+                    }
+                ],
+                outro: [
+                    { speaker: "시스템", text: "핵심 키워드 감지: 자원봉사" },
+                    { speaker: "조사요원", text: "...자원봉사?" },
+                    { speaker: "서연", text: "네. 지금까지 사라진 개념이에요." }
+                ]
+            },
+            {
+                id: "room4", name: "4번방 : 자원봉사센터",
+                wallColor: 0xcbd5e1, floorColor: 0x64748b,
+                intro: [
+                    { speaker: "조사요원", text: "여기가 중심이네." },
+                    { speaker: "서연", text: "여기서 모든 게 유지되고 있었어요." }
+                ],
+                bgObjects: [
+                    { type: 'officeDesk', pos: [-6, -5, -6] }, { type: 'officeDesk', pos: [0, -5, -6] }, { type: 'officeDesk', pos: [6, -5, -6] },
+                    { type: 'officeDesk', pos: [-6, -5, 0] }, { type: 'officeDesk', pos: [6, -5, 0] },
+                    { type: 'waitingChair', pos: [-6, -5, 8] }, { type: 'waitingChair', pos: [0, -5, 8] }, { type: 'waitingChair', pos: [6, -5, 8] },
+                    { type: 'plant', pos: [-10, -5, -10] }, { type: 'plant', pos: [10, -5, -10] },
+                    { type: 'ticketDispenser', pos: [-5, -5, 3], rot: [0, 0.5, 0] },
+                    { type: 'documentCabinet', pos: [9, -5, -2], rot: [0, -Math.PI/2, 0] }
+                ],
+                objects: [
+                    {
+                        name: "메인 서류 보관함", type: "documentCabinet", pos: [-9, -5, -2], rot: [0, Math.PI/2, 0],
+                        preDialog: [], question: "자원봉사의 기본 원칙은?", typeAnswer: "choice", 
+                        options: ["의무성, 영리성, 일회성, 정파성, 종파성", "자발성, 공익성, 비영리성, 비정파성, 비종파성"], answer: "자발성, 공익성, 비영리성, 비정파성, 비종파성", rewardUnderstanding: 90
+                    },
+                    {
+                        name: "민원실 대형 지구본", type: "globe", pos: [6, -5, 3],
+                        preDialog: [], question: "세계 자원봉사자의 해 취지는?", typeAnswer: "choice", 
+                        options: ["스펙 쌓기", "경제적 이익", "자원봉사의 사회적 가치 확산"], answer: "자원봉사의 사회적 가치 확산", rewardUnderstanding: 95
+                    },
+                    {
+                        name: "통합 번호표 발권기", type: "ticketDispenser", pos: [0, -5, 2],
+                        preDialog: [], question: "자원봉사 연계 사이트는?", typeAnswer: "text", 
+                        answer: "1365", rewardCode: "사", rewardUnderstanding: 100
+                    }
+                ],
+                outro: [
+                    { speaker: "시스템", text: "코드 입력:\n[자/원/봉/사]\n남은 시간: 00:30" }, 
+                    { speaker: "서연", text: "이제 입력하세요." }, 
+                    { speaker: "조사요원", text: "...이건..." }, 
+                    { action: 'openFinalModal' }
+                ]
+            }
+        ];
+
+        /* ========================================================
+           2. 상태 및 Three.js 초기화
+           ======================================================== */
+        let state = {
+            isPlaying: false, isTimerStarted: false, time: 40 * 60, understanding: 0,
+            inventory: [], codes: [], currentRoomIdx: 0, currentObjIdx: 0,
+            dialogueQueue: [], timerInterval: null
+        };
+
+        let currentWrongCount = 0;
+        let scene, camera, renderer, raycaster, mouse;
+        let interactiveGroups = [], bgGroups = [];
+        let roomBoxMesh, floorMesh;
+        
+        let currentHoveredGroup = null;
+        let isDragging = false, dragStartPos = {x:0, y:0}, lastPointerPos = {x:0, y:0}, pointerDownTime = 0;
+        let targetRotationX = 0, targetRotationY = 0.2, mouseX = window.innerWidth/2, mouseY = window.innerHeight/2;
+
+        function initThreeJS() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.015);
             
-            <div class="cat">
-              <div class="picture">
-                <img src="images/mew.png" alt="Mew">
-              </div>
-              <small>Mew</small>
-            </div>
-            <div class="cat">
-              <div class="picture">
-                <img src="images/siesta.png" alt="Siesta">
-              </div>
-              <small>Siesta</small>
-            </div>
-            <div class="cat">
-              <div class="picture">
-                <img src="images/tiger.png" alt="Tiger">
-              </div>
-              <small>Tiger</small>
-            </div>
-          </section>
-        </section>
-      </section>
-    </section>
-  </section>
+            camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, -1, 0); 
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true; 
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            sunLight.position.set(15, 20, 15);
+            sunLight.castShadow = true;
+            sunLight.shadow.mapSize.width = 1024; sunLight.shadow.mapSize.height = 1024;
+            sunLight.shadow.camera.near = 0.5; sunLight.shadow.camera.far = 60;
+            sunLight.shadow.camera.left = -25; sunLight.shadow.camera.right = 25;
+            sunLight.shadow.camera.top = 25; sunLight.shadow.camera.bottom = -25;
+            scene.add(sunLight);
+
+            roomBoxMesh = new THREE.Mesh(new THREE.BoxGeometry(50, 25, 50), new THREE.MeshStandardMaterial({ side: THREE.BackSide, roughness: 1 }));
+            scene.add(roomBoxMesh);
+            
+            floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(50, 50), new THREE.MeshStandardMaterial({ roughness: 0.9 }));
+            floorMesh.rotation.x = -Math.PI / 2;
+            floorMesh.position.y = -5;
+            floorMesh.receiveShadow = true;
+            scene.add(floorMesh);
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            document.addEventListener('pointerdown', onPointerDown, { passive: false });
+            document.addEventListener('pointermove', onPointerMove, { passive: false });
+            document.addEventListener('pointerup', onPointerUp, { passive: false });
+            window.addEventListener('resize', onWindowResize, false);
+
+            animate();
+        }
+
+        /* ========================================================
+           3. 방대한 폴리곤 오브젝트 팩토리
+           ======================================================== */
+        function createPolygonObject(type, isInteractive=false) {
+            const group = new THREE.Group();
+            group.userData.meshes = [];
+
+            const getMat = (col, rough=0.8, metal=0.1) => new THREE.MeshStandardMaterial({ color: col, roughness: rough, metalness: metal });
+            
+            const matStone = getMat(0x64748b); const matDarkStone = getMat(0x475569);
+            const matWood = getMat(0x5c4033); const matDarkWood = getMat(0x3e2723);
+            const matLeaves = getMat(0x2d5a27); const matCloth = getMat(0x3b82f6, 1.0);
+            const matMetal = getMat(0x94a3b8, 0.4, 0.6); const matScreen = getMat(0x0f172a, 0.2, 0.8);
+
+            const addMesh = (geo, mat, pos=[0,0,0], rot=[0,0,0], scale=[1,1,1]) => {
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(...pos); mesh.rotation.set(...rot); mesh.scale.set(...scale);
+                mesh.castShadow = true; mesh.receiveShadow = true;
+                group.add(mesh); group.userData.meshes.push(mesh);
+                return mesh;
+            };
+
+            switch(type) {
+                case 'castleWallX': addMesh(new THREE.BoxGeometry(30, 4, 2), matStone, [0, 2, 0]); for(let i=-14; i<=14; i+=2) addMesh(new THREE.BoxGeometry(1, 1, 2), matDarkStone, [i, 4.5, 0]); break;
+                case 'castleWallZ': addMesh(new THREE.BoxGeometry(2, 4, 30), matStone, [0, 2, 0]); for(let i=-14; i<=14; i+=2) addMesh(new THREE.BoxGeometry(2, 1, 1), matDarkStone, [0, 4.5, i]); break;
+                case 'castleTower': addMesh(new THREE.BoxGeometry(4, 6, 4), matStone, [0, 3, 0]); addMesh(new THREE.BoxGeometry(4.5, 0.5, 4.5), matDarkStone, [0, 6.25, 0]); addMesh(new THREE.BoxGeometry(3, 2, 3), matWood, [0, 7.5, 0]); addMesh(new THREE.ConeGeometry(3.5, 2, 4), matDarkWood, [0, 9.5, 0], [0, Math.PI/4, 0]); break;
+                case 'stoneStairs': for(let i=0; i<6; i++) addMesh(new THREE.BoxGeometry(2, 0.8, 1.5), matStone, [0, i*0.8 + 0.4, i*1.5]); break;
+                case 'pineTree': addMesh(new THREE.CylinderGeometry(0.4, 0.5, 3), matWood, [0, 1.5, 0]); addMesh(new THREE.ConeGeometry(1.8, 2.5, 5), matLeaves, [0, 3.2, 0]); addMesh(new THREE.ConeGeometry(1.4, 2.0, 5), matLeaves, [0, 4.5, 0]); addMesh(new THREE.ConeGeometry(1.0, 1.5, 5), matLeaves, [0, 5.5, 0]); break;
+                case 'rockCluster': for(let i=0; i<4; i++) { const s = 0.6 + Math.random()*1.2; addMesh(new THREE.DodecahedronGeometry(s), matDarkStone, [(Math.random()-0.5)*2.5, s/2, (Math.random()-0.5)*2.5], [Math.random(), Math.random(), Math.random()]); } break;
+                case 'weaponRack': addMesh(new THREE.BoxGeometry(3, 0.2, 1), matWood, [0, 0.1, 0]); addMesh(new THREE.BoxGeometry(0.2, 2, 0.2), matWood, [-1.3, 1, 0]); addMesh(new THREE.BoxGeometry(0.2, 2, 0.2), matWood, [1.3, 1, 0]); addMesh(new THREE.BoxGeometry(3, 0.2, 0.2), matWood, [0, 2, 0]); for(let i=-1; i<=1; i++) { addMesh(new THREE.CylinderGeometry(0.05, 0.05, 3), matMetal, [i, 1.5, 0.2], [0, 0, 0.1]); } break;
+                case 'brokenCart': addMesh(new THREE.BoxGeometry(2.5, 0.5, 3.5), matWood, [0, 1, 0], [0.2, 0, 0.1]); addMesh(new THREE.CylinderGeometry(0.8, 0.8, 0.2, 16), matDarkWood, [-1.4, 0.8, 0], [0, 0, Math.PI/2]); addMesh(new THREE.CylinderGeometry(0.8, 0.8, 0.2, 16), matDarkWood, [1.4, 1.2, -1], [0.3, 0, Math.PI/2]); break;
+                case 'flag': addMesh(new THREE.CylinderGeometry(0.08, 0.08, 5), matWood, [0, 2.5, 0]); addMesh(new THREE.BoxGeometry(2, 1.2, 0.05), matCloth, [1, 4.5, 0]); break;
+                case 'monument': addMesh(new THREE.BoxGeometry(2.5, 0.5, 1.5), matDarkStone, [0, 0.25, 0]); addMesh(new THREE.BoxGeometry(2.0, 0.5, 1.0), matDarkStone, [0, 0.75, 0]); addMesh(new THREE.BoxGeometry(1.2, 3, 0.4), matStone, [0, 2.5, 0]); break;
+                case 'gate': addMesh(new THREE.BoxGeometry(1.5, 6, 1.5), matDarkStone, [-2.5, 3, 0]); addMesh(new THREE.BoxGeometry(1.5, 6, 1.5), matDarkStone, [2.5, 3, 0]); addMesh(new THREE.BoxGeometry(6.5, 1.5, 1.5), matStone, [0, 6.75, 0]); addMesh(new THREE.BoxGeometry(2.4, 5.5, 0.2), matWood, [-1.25, 2.75, 0]); addMesh(new THREE.BoxGeometry(2.4, 5.5, 0.2), matWood, [1.25, 2.75, 0]); break;
+
+                case 'trashPile': for(let i=0; i<8; i++) addMesh(new THREE.DodecahedronGeometry(0.5 + Math.random()*0.7), getMat(0x4B5563), [(Math.random()-0.5)*2.5, 0.5, (Math.random()-0.5)*2.5], [Math.random(), Math.random(), Math.random()]); break;
+                case 'woodenBox': addMesh(new THREE.BoxGeometry(2.5, 2.5, 2.5), matWood, [0, 1.25, 0]); break;
+                case 'noticeBoard': addMesh(new THREE.CylinderGeometry(0.15, 0.15, 4), matWood, [-2, 2, 0]); addMesh(new THREE.CylinderGeometry(0.15, 0.15, 4), matWood, [2, 2, 0]); addMesh(new THREE.BoxGeometry(5, 3, 0.2), getMat(0xF5F5DC), [0, 3.5, 0]); break;
+                case 'stall': addMesh(new THREE.BoxGeometry(4, 2, 2), matWood, [0, 1, 0]); addMesh(new THREE.BoxGeometry(0.2, 3, 0.2), matWood, [-1.8, 2.5, -0.8]); addMesh(new THREE.BoxGeometry(0.2, 3, 0.2), matWood, [1.8, 2.5, -0.8]); addMesh(new THREE.BoxGeometry(4.4, 0.2, 3), getMat(0x8b0000), [0, 4, 0], [0.3, 0, 0]); break;
+                case 'tent': addMesh(new THREE.BoxGeometry(5, 0.2, 5), matWood, [0, 0.1, 0]); addMesh(new THREE.ConeGeometry(3.5, 3, 4), getMat(0x1e3a8a), [0, 2, 0], [0, Math.PI/4, 0]); break;
+                case 'barrel': addMesh(new THREE.CylinderGeometry(0.8, 0.8, 2.2, 12), matDarkWood, [0, 1.1, 0]); break;
+                case 'streetLamp': addMesh(new THREE.CylinderGeometry(0.1, 0.1, 6), matMetal, [0, 3, 0]); addMesh(new THREE.BoxGeometry(1, 0.5, 1), matDarkStone, [0, 6, 0]); const lightMat = new THREE.MeshStandardMaterial({color: 0xfde047, emissive: 0xfde047, emissiveIntensity: 0.8}); addMesh(new THREE.SphereGeometry(0.4), lightMat, [0, 5.7, 0]); break;
+
+                case 'pollutedWater': addMesh(new THREE.CylinderGeometry(4.5, 4.5, 0.2, 24), getMat(0x0ea5e9, 0.6), [0, 0.1, 0]); break; 
+                case 'brokenBridge': addMesh(new THREE.BoxGeometry(2, 0.4, 3.5), matWood, [0, 1.2, -1.5], [0.4, 0, 0]); addMesh(new THREE.BoxGeometry(2, 0.4, 3.5), matWood, [0, 0.6, 2], [-0.6, 0, 0]); break;
+                case 'guardHouse': addMesh(new THREE.BoxGeometry(4.5, 5, 4.5), getMat(0xe2e8f0), [0, 2.5, 0]); addMesh(new THREE.ConeGeometry(4, 2, 4), getMat(0xef4444), [0, 6, 0], [0, Math.PI/4, 0]); break;
+                case 'tree': addMesh(new THREE.CylinderGeometry(0.6, 0.8, 4), matWood, [0, 2, 0]); addMesh(new THREE.DodecahedronGeometry(3.5), matLeaves, [0, 5, 0]); break;
+                case 'bush': addMesh(new THREE.DodecahedronGeometry(1.8), matLeaves, [0, 0.9, 0], [0,0,0], [1.5, 0.8, 1.2]); break;
+                case 'bench': addMesh(new THREE.BoxGeometry(3.5, 0.3, 1.2), matWood, [0, 1, 0]); addMesh(new THREE.BoxGeometry(0.2, 1, 1), getMat(0x222222), [-1.5, 0.5, 0]); addMesh(new THREE.BoxGeometry(0.2, 1, 1), getMat(0x222222), [1.5, 0.5, 0]); break;
+
+                case 'officeDesk': 
+                    addMesh(new THREE.BoxGeometry(3.5, 0.2, 2), matWood, [0, 2.5, 0]); 
+                    addMesh(new THREE.BoxGeometry(0.2, 2.5, 1.8), matMetal, [-1.5, 1.25, 0]); 
+                    addMesh(new THREE.BoxGeometry(0.2, 2.5, 1.8), matMetal, [1.5, 1.25, 0]); 
+                    addMesh(new THREE.BoxGeometry(3.5, 1.5, 0.1), getMat(0xbae6fd), [0, 3.25, -1]); 
+                    addMesh(new THREE.BoxGeometry(1.2, 0.8, 0.1), matScreen, [0, 3, -0.5]); 
+                    addMesh(new THREE.BoxGeometry(0.4, 0.2, 0.4), matDarkStone, [0, 2.6, -0.6]); 
+                    break;
+                case 'waitingChair': 
+                    addMesh(new THREE.BoxGeometry(3, 0.3, 1.5), getMat(0x0284c7), [0, 1.5, 0]); 
+                    addMesh(new THREE.BoxGeometry(3, 1.5, 0.3), getMat(0x0284c7), [0, 2.3, -0.6]); 
+                    addMesh(new THREE.CylinderGeometry(0.1, 0.1, 1.5), matMetal, [-1.3, 0.75, 0]); 
+                    addMesh(new THREE.CylinderGeometry(0.1, 0.1, 1.5), matMetal, [1.3, 0.75, 0]); 
+                    break;
+                case 'ticketDispenser': 
+                    addMesh(new THREE.BoxGeometry(1.2, 3, 1), getMat(0xf8fafc), [0, 1.5, 0]); 
+                    addMesh(new THREE.BoxGeometry(1.3, 1, 1.1), getMat(0x334155), [0, 3.5, 0], [0.2, 0, 0]); 
+                    addMesh(new THREE.BoxGeometry(1.1, 0.8, 0.1), matScreen, [0, 3.6, 0.55], [0.2, 0, 0]); 
+                    addMesh(new THREE.BoxGeometry(0.8, 0.1, 0.8), matMetal, [0, 0.05, 0]); 
+                    break;
+                case 'documentCabinet': 
+                    addMesh(new THREE.BoxGeometry(4, 6, 1.5), getMat(0xcbd5e1), [0, 3, 0]); 
+                    for(let i=0; i<3; i++) {
+                        addMesh(new THREE.BoxGeometry(3.8, 1.8, 0.1), getMat(0x94a3b8), [0, 1.2 + i*1.9, 0.76]); 
+                        addMesh(new THREE.BoxGeometry(0.6, 0.1, 0.2), matMetal, [0, 1.6 + i*1.9, 0.8]); 
+                    }
+                    break;
+                case 'globe': 
+                    addMesh(new THREE.CylinderGeometry(1, 1.2, 0.6), getMat(0x94a3b8), [0, 0.3, 0]); addMesh(new THREE.CylinderGeometry(0.15, 0.15, 2.5), matMetal, [0, 1.8, 0]); addMesh(new THREE.SphereGeometry(2, 24, 24), getMat(0x38bdf8, 0.3, 0.5), [0, 3.5, 0]); break;
+                case 'plant': 
+                    addMesh(new THREE.CylinderGeometry(0.7, 0.5, 1.2), getMat(0xffffff), [0, 0.6, 0]); addMesh(new THREE.DodecahedronGeometry(1.2), matLeaves, [0, 2, 0]); break;
+            }
+
+            if (isInteractive) group.userData.isInteractiveGroup = true;
+            return group;
+        }
+
+        /* ========================================================
+           4. 인터랙션 및 방 관리
+           ======================================================== */
+        function updateMouseCoords(x, y) { mouse.x = (x / window.innerWidth)*2-1; mouse.y = -(y / window.innerHeight)*2+1; }
+        
+        function onPointerDown(e) { if (!state.isPlaying || e.target.closest('.interactive-ui')) return; isDragging = true; dragStartPos={x:e.clientX, y:e.clientY}; lastPointerPos={x:e.clientX, y:e.clientY}; pointerDownTime=Date.now(); updateMouseCoords(e.clientX, e.clientY); }
+        function onPointerMove(e) { if (!state.isPlaying) return; mouseX=e.clientX; mouseY=e.clientY; updateMouseCoords(e.clientX, e.clientY); if (isDragging) { targetRotationX += (e.clientX-lastPointerPos.x)*0.0045; targetRotationY += (e.clientY-lastPointerPos.y)*0.0045; targetRotationY = Math.max(-Math.PI/3, Math.min(Math.PI/3, targetRotationY)); lastPointerPos={x:e.clientX, y:e.clientY}; } }
+        function onPointerUp(e) { if (!state.isPlaying || !isDragging) return; isDragging = false; if (Date.now()-pointerDownTime < 400 && Math.hypot(e.clientX-dragStartPos.x, e.clientY-dragStartPos.y) < 15) { updateMouseCoords(e.clientX, e.clientY); handleObjectClick(); } }
+
+        function handleObjectClick() {
+            if (state.dialogueQueue.length > 0 || !document.getElementById('question-modal').classList.contains('hidden')) return;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(interactiveGroups, true);
+            if (intersects.length > 0) {
+                let group = intersects[0].object; while(group && !group.userData.isInteractiveGroup) group = group.parent;
+                if (group && group.userData.isClickable) triggerObject(group.userData.objData);
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        async function loadRoom3D(isInitial = false) {
+            if (state.currentRoomIdx >= storyData.length) { 
+                state.dialogueQueue = [...storyData[storyData.length-1].outro]; 
+                processDialogue(); 
+                return; 
+            }
+            const room = storyData[state.currentRoomIdx]; state.currentObjIdx = 0;
+            
+            if (!isInitial) { 
+                document.getElementById('blackout').style.opacity = '1'; 
+                await new Promise(r => setTimeout(r, 1400)); 
+            } else {
+                // 최초 실행 시에는 화면을 까맣게 유지합니다.
+                document.getElementById('blackout').style.opacity = '1';
+            }
+
+            scene.fog.color.setHex(room.floorColor); roomBoxMesh.material.color.setHex(room.wallColor); floorMesh.material.color.setHex(room.floorColor);
+            document.getElementById('ui-location').innerText = room.name;
+            
+            interactiveGroups.forEach(g => { g.children.forEach(m => { if(m.geometry) m.geometry.dispose(); if(m.material) m.material.dispose(); }); scene.remove(g); }); interactiveGroups = [];
+            bgGroups.forEach(g => { g.children.forEach(m => { if(m.geometry) m.geometry.dispose(); if(m.material) m.material.dispose(); }); scene.remove(g); }); bgGroups = [];
+
+            if (room.bgObjects) { room.bgObjects.forEach(obj => { const g = createPolygonObject(obj.type, false); g.position.set(...obj.pos); if (obj.rot) g.rotation.set(...obj.rot); scene.add(g); bgGroups.push(g); }); }
+            room.objects.forEach((obj, idx) => { const g = createPolygonObject(obj.type, true); g.position.set(...obj.pos); if(obj.rot) g.rotation.set(...obj.rot); else g.lookAt(0, obj.pos[1], 0); g.userData.objData = obj; g.userData.index = idx; g.userData.isClickable = false; scene.add(g); interactiveGroups.push(g); });
+
+            updateUI(); updateRoomState();
+            targetRotationX = 0; targetRotationY = 0.2; camera.rotation.x = 0.2;
+            state.dialogueQueue = [...room.intro];
+            
+            if (!isInitial) { 
+                document.getElementById('blackout').style.opacity = '0'; 
+                await new Promise(r => setTimeout(r, 1400)); 
+            }
+            
+            processDialogue();
+        }
+
+        function updateRoomState() {
+            interactiveGroups.forEach(g => {
+                const isCurrent = g.userData.index === state.currentObjIdx;
+                g.userData.isClickable = isCurrent;
+                
+                g.userData.meshes.forEach(m => {
+                    if(!m.material) return;
+                    if (g.userData.index < state.currentObjIdx) { 
+                        m.material.transparent = true; m.material.opacity = 0.5; m.material.color.setHex(0x333333);
+                        if(m.material.emissive) m.material.emissiveIntensity = 0;
+                    } else {
+                        m.material.opacity = 1.0; m.material.transparent = false;
+                        if(m.material.emissive) m.material.emissiveIntensity = 0; 
+                    }
+                });
+            });
+        }
+
+        window.addEventListener('load', () => { 
+            initThreeJS(); state.isPlaying = true; loadRoom3D(true); 
+            setTimeout(() => { document.getElementById('sidebar').style.opacity = '1'; }, 1000); 
+        });
+        
+        function startGlobalTimer() { 
+            if (state.isTimerStarted) return; 
+            state.isTimerStarted = true; 
+            const t = document.getElementById('ui-time'); 
+            t.classList.remove('text-slate-500'); t.classList.add('text-rose-400'); 
+            state.timerInterval = setInterval(updateTimer, 1000); 
+        }
+
+        function updateTimer() { 
+            if (!state.isPlaying) return; 
+            state.time--; 
+            document.getElementById('ui-time').innerText = formatTime(state.time); 
+            if (state.time <= 300) document.getElementById('ui-time').classList.add('animate-pulse', 'text-rose-500'); 
+            
+            let alertMsg = null;
+            if (state.time === 30 * 60) alertMsg = "아직은 여유 있지만 오래 머무르면 위험해요.";
+            else if (state.time === 20 * 60) alertMsg = "데이터 손상이 빨라지고 있어요.";
+            else if (state.time === 10 * 60) alertMsg = "붕괴 임박입니다. 서둘러야 해요.";
+            else if (state.time === 5 * 60) alertMsg = "시간이 거의 없습니다!";
+            else if (state.time === 60) alertMsg = "지금 입력하세요!";
+
+            if (alertMsg && document.getElementById('question-modal').classList.contains('hidden')) {
+                state.dialogueQueue.unshift({ speaker: "서연", text: alertMsg });
+                if (document.getElementById('dialogue-box').classList.contains('hidden')) {
+                    processDialogue();
+                }
+            }
+
+            if (state.time <= 0) handleTimeOver(); 
+        }
+        
+        function formatTime(seconds) { return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`; }
+
+        const dialogBox = document.getElementById('dialogue-box'); const dialogName = document.getElementById('speaker-name'); const dialogText = document.getElementById('dialogue-text');
+        
+        // 화면의 아무 UI 영역이나 클릭해도 대화가 넘어가게 하여 사용자 편의성을 높입니다.
+        document.getElementById('ui-layer').addEventListener('click', (e) => {
+            if (!dialogBox.classList.contains('hidden')) {
+                processDialogue();
+            }
+        });
+        
+        function processDialogue() {
+            if (state.dialogueQueue.length === 0) { dialogBox.classList.add('hidden'); dialogBox.style.opacity = '0'; return; }
+            const current = state.dialogueQueue.shift();
+            
+            if (current.action === "startTimer") startGlobalTimer();
+            if (current.action === "fadeInRoom") document.getElementById('blackout').style.opacity = '0'; // 배경 밝아짐
+            if (current.action === 'openModal') { dialogBox.classList.add('hidden'); openQuestionModal(current.targetObj); return; }
+            if (current.action === 'nextRoom') { dialogBox.classList.add('hidden'); state.currentRoomIdx++; loadRoom3D(); return; }
+            if (current.action === 'openFinalModal') { dialogBox.classList.add('hidden'); renderFinalModal(); return; }
+            if (current.action === 'triggerSuccessEnd') { dialogBox.classList.add('hidden'); gameOver(true); return; }
+            if (current.action === 'triggerFailEnd') { dialogBox.classList.add('hidden'); gameOver(false); return; }
+
+            dialogBox.classList.remove('hidden'); setTimeout(() => dialogBox.style.opacity = '1', 50);
+            dialogName.innerText = current.speaker; dialogText.innerHTML = current.text.replace(/\n/g, '<br>');
+            
+            if(current.speaker === '시스템') dialogName.className = 'text-rose-400 font-bold mb-2 text-xs md:text-sm tracking-widest uppercase'; 
+            else if(current.speaker === '서연') dialogName.className = 'text-emerald-400 font-bold mb-2 text-xs md:text-sm tracking-widest uppercase'; 
+            else dialogName.className = 'text-blue-400 font-bold mb-2 text-xs md:text-sm tracking-widest uppercase';
+        }
+
+        function updateUI() {
+            document.getElementById('ui-understanding').innerText = state.understanding + "%"; document.getElementById('ui-progress-bar').style.width = state.understanding + "%";
+            const inv = document.getElementById('ui-inventory'); if (inv) inv.innerHTML = state.inventory.length === 0 ? '<span class="italic text-slate-600">없음</span>' : state.inventory.map(i => `<span class="bg-amber-900/30 border border-amber-500/50 text-amber-200 px-2 py-1 rounded text-[10px] truncate">${i}</span>`).join('');
+            const codes = document.getElementById('ui-codes'); if (codes) codes.innerText = state.codes.length > 0 ? state.codes.join(" ") : "-";
+        }
+
+        function triggerObject(objData) { 
+            document.getElementById('object-tooltip').style.display = 'none'; 
+            if (objData.preDialog && objData.preDialog.length > 0) { 
+                state.dialogueQueue = [...objData.preDialog, { action: 'openModal', targetObj: objData }]; 
+                processDialogue(); 
+            } else {
+                openQuestionModal(objData); 
+            }
+        }
+
+        function openQuestionModal(obj) {
+            currentQuizObj = obj; currentWrongCount = 0; document.getElementById('modal-title').querySelector('span').innerText = obj.name + " 단서 해독"; document.getElementById('modal-desc').innerText = obj.question; const area = document.getElementById('modal-answer-area'); area.innerHTML = ''; document.getElementById('modal-feedback').classList.add('hidden');
+            if (obj.typeAnswer === 'choice') { obj.options.forEach(opt => { const btn = document.createElement('button'); btn.className = "w-full text-left glass-button text-slate-200 p-4 rounded-xl font-medium text-sm md:text-lg"; btn.innerText = opt; btn.onclick = (e) => { e.stopPropagation(); checkAnswer(opt, obj.answer); }; area.appendChild(btn); }); } else { const input = document.createElement('input'); input.className = "w-full bg-white/5 border border-white/10 rounded-xl p-4 text-white focus:outline-none focus:ring-1 focus:ring-amber-500 mb-2 transition-all"; input.placeholder = "정답 입력 후 엔터"; input.onkeypress = (e) => { if(e.key === 'Enter') { e.stopPropagation(); checkAnswer(input.value.trim(), obj.answer); } }; input.onclick = (e) => e.stopPropagation(); area.appendChild(input); setTimeout(() => input.focus(), 150); }
+            document.getElementById('question-modal').classList.remove('hidden');
+        }
+
+        function checkAnswer(pa, ca) {
+            const fb = document.getElementById('modal-feedback'); fb.classList.remove('hidden');
+            if (pa.replace(/\s/g, '') === ca.replace(/\s/g, '')) { 
+                fb.innerText = "SUCCESS: 정답입니다."; fb.className = "text-center font-black text-emerald-400 text-lg bg-emerald-950/30 py-2 rounded-xl border border-emerald-500/50"; 
+                setTimeout(() => { document.getElementById('question-modal').classList.add('hidden'); handleCorrectAnswer(); }, 1200); 
+            } else { 
+                state.time -= 30; currentWrongCount++; const countText = currentWrongCount > 1 ? ` (${currentWrongCount})` : ""; fb.innerText = `ERROR: 데이터 충돌 발생 (-30초)${countText}`; fb.className = "text-center font-black text-rose-500 text-lg bg-rose-950/30 py-2 rounded-xl border border-rose-500/50"; updateTimer(); 
+            }
+        }
+
+        function handleCorrectAnswer() { 
+            const room = storyData[state.currentRoomIdx]; 
+            if (currentQuizObj.rewardItem) state.inventory.push(currentQuizObj.rewardItem); 
+            if (currentQuizObj.rewardCode) state.codes.push(currentQuizObj.rewardCode); 
+            if (currentQuizObj.rewardUnderstanding) state.understanding = currentQuizObj.rewardUnderstanding; 
+            
+            updateUI(); 
+            state.currentObjIdx++; updateRoomState(); 
+            
+            if (state.currentObjIdx >= room.objects.length) { 
+                state.dialogueQueue.push(...room.outro, { action: 'nextRoom' }); 
+            } 
+            processDialogue(); 
+        }
+
+        function renderFinalModal() {
+            document.getElementById('ui-location').innerText = "SYSTEM.ROOT";
+            interactiveGroups.forEach(g => scene.remove(g));
+            
+            document.getElementById('question-modal').classList.remove('hidden');
+            document.getElementById('modal-title').querySelector('span').innerText = "최종 복구 프로세스"; document.getElementById('modal-desc').innerText = "붕괴를 막기 위한 마스터 코드를 입력하십시오."; const area = document.getElementById('modal-answer-area'); area.innerHTML = ''; currentWrongCount = 0; const input = document.createElement('input'); input.className = "w-full bg-slate-950/80 border-4 border-emerald-500/50 rounded-3xl p-5 text-emerald-400 text-2xl text-center font-black tracking-[0.4em] focus:outline-none focus:border-emerald-500 transition-all shadow-[0_0_20px_rgba(16,185,129,0.2)]"; const fb = document.getElementById('modal-feedback');
+            
+            input.onclick = (e) => e.stopPropagation();
+            input.onkeypress = (e) => { 
+                if(e.key === 'Enter') { 
+                    e.stopPropagation();
+                    if(input.value.trim() === "자원봉사") { 
+                        document.getElementById('question-modal').classList.add('hidden');
+                        state.dialogueQueue = [
+                            { speaker: "시스템", text: "정답 확인 완료\n자원봉사" },
+                            { speaker: "서연", text: "복구되고 있어요!" },
+                            { speaker: "조사요원", text: "...이 도시를 지탱하던 건 사람이었네." },
+                            { speaker: "시스템", text: "동래구 정상화 완료", action: 'triggerSuccessEnd' }
+                        ];
+                        processDialogue();
+                    } else { 
+                        state.time -= 30; currentWrongCount++; fb.classList.remove('hidden'); fb.innerText = `ERROR: 코드 불일치 (-30초) ${currentWrongCount > 1 ? `(${currentWrongCount})` : ''}`; fb.className = "text-center font-black text-rose-500 text-lg bg-rose-950/30 py-2 rounded-xl border border-rose-500/50 mt-4"; input.style.borderColor = '#f43f5e'; setTimeout(() => input.style.borderColor = 'rgba(16, 185, 129, 0.5)', 500); updateTimer(); 
+                    } 
+                } 
+            }; 
+            area.appendChild(input); setTimeout(() => input.focus(), 150);
+        }
+
+        function handleTimeOver() {
+            clearInterval(state.timerInterval);
+            document.getElementById('question-modal').classList.add('hidden');
+            state.dialogueQueue = [
+                { speaker: "시스템", text: "시간 초과" },
+                { speaker: "서연", text: "...늦었어요.", action: 'triggerFailEnd' }
+            ];
+            processDialogue();
+        }
+
+        async function gameOver(isSuccess) { 
+            clearInterval(state.timerInterval); state.isPlaying = false; 
+            document.getElementById('sidebar').style.opacity = '0'; document.getElementById('dialogue-box').style.opacity = '0'; document.getElementById('question-modal').classList.add('hidden'); 
+            const blackout = document.getElementById('blackout'); blackout.style.backgroundColor = 'black'; blackout.style.opacity = '1'; 
+            
+            await new Promise(r => setTimeout(r, 1800)); 
+            
+            if (isSuccess) { 
+                const used = (40 * 60) - Math.max(state.time, 0); 
+                document.getElementById('result-time').innerText = `${Math.floor(used/60).toString().padStart(2,'0')}:${(used%60).toString().padStart(2,'0')}`; 
+                blackout.style.backgroundColor = 'white'; 
+                document.getElementById('result-screen').classList.remove('hidden'); 
+                setTimeout(() => { document.getElementById('result-screen').style.opacity = '1'; blackout.style.opacity = '0'; }, 100); 
+            } else { 
+                document.getElementById('fail-screen').classList.remove('hidden'); 
+                setTimeout(() => { document.getElementById('fail-screen').style.opacity = '1'; blackout.style.opacity = '0'; }, 100); 
+            } 
+        }
+
+        function setEmissive(group, colorHex, intensity) {
+            if (!group || !group.userData.meshes) return;
+            group.userData.meshes.forEach(m => {
+                if (m.material && m.material.emissive) {
+                    if (m.userData.originalEmissive === undefined) {
+                        m.userData.originalEmissive = m.material.emissive.getHex();
+                        m.userData.originalIntensity = m.material.emissiveIntensity;
+                    }
+                    m.material.emissive.setHex(colorHex);
+                    m.material.emissiveIntensity = intensity;
+                }
+            });
+        }
+
+        function resetEmissive(group) {
+            if (!group || !group.userData.meshes) return;
+            group.userData.meshes.forEach(m => {
+                if (m.material && m.material.emissive) {
+                    if (m.userData.originalEmissive !== undefined) {
+                        m.material.emissive.setHex(m.userData.originalEmissive);
+                        m.material.emissiveIntensity = m.userData.originalIntensity;
+                    } else {
+                        m.material.emissive.setHex(0x000000);
+                        m.material.emissiveIntensity = 0;
+                    }
+                }
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (state.isPlaying) {
+                camera.rotation.y += (targetRotationX - camera.rotation.y) * 0.15; camera.rotation.x += (targetRotationY - camera.rotation.x) * 0.15; camera.rotation.order = "YXZ";
+                
+                const tooltip = document.getElementById('object-tooltip');
+                let hg = null;
+                if (!isDragging) {
+                    raycaster.setFromCamera(mouse, camera);
+                    const intersects = raycaster.intersectObjects(interactiveGroups, true);
+                    if(intersects.length > 0) {
+                        let g = intersects[0].object; while(g && !g.userData.isInteractiveGroup) g = g.parent;
+                        if(g && g.userData.isClickable) hg = g;
+                    }
+                }
+
+                if (hg) {
+                    if (currentHoveredGroup !== hg) {
+                        currentHoveredGroup = hg; document.body.style.cursor = 'pointer';
+                        if (window.matchMedia("(pointer: fine)").matches) { tooltip.style.display = 'block'; tooltip.innerText = hg.userData.objData.name; }
+                    }
+                    tooltip.style.left = mouseX + 'px'; tooltip.style.top = mouseY + 'px';
+                    setEmissive(hg, 0x10b981, 0.4); 
+                } else if (currentHoveredGroup) {
+                    resetEmissive(currentHoveredGroup); currentHoveredGroup = null; document.body.style.cursor = 'default'; tooltip.style.display = 'none';
+                }
+            }
+            renderer.render(scene, camera);
+        }
+    </script>
 </body>
 </html>
